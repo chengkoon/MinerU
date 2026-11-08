@@ -11,6 +11,7 @@ from typing import Any
 import onnxruntime as ort
 from loguru import logger
 
+from .memory import low_memory_enabled
 from .onnx_device import confirm_gpu_session, metacommands_enabled
 from .device_types import OnnxSelection
 from .device_state import resolve_model_backend, resolve_model_device
@@ -114,6 +115,12 @@ def configure_ort_threads(
         setattr(opts, attr, threads if threads > 0 else default)
 
 
+def release_cpu_memory_between_runs(opts: ort.SessionOptions) -> None:
+    """低内存模式下 CPU 会话不保留内存池：每次推理的激活内存用完即交还分配器，不再按历史峰值常驻。"""
+    opts.enable_cpu_mem_arena = False
+    opts.enable_mem_pattern = False
+
+
 def ort_providers(device: str | None = None) -> list[tuple[str, dict[str, object]]]:
     """通用 ONNX 模型固定使用 CPU；表格工厂独立选择 CUDA provider。"""
     return [("CPUExecutionProvider", {"arena_extend_strategy": "kSameAsRequested"})]
@@ -134,6 +141,8 @@ def create_ort_session(
     opts.log_severity_level = 3
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     configure_ort_threads(opts, intra_op_num_threads=intra_op_num_threads, inter_op_num_threads=inter_op_num_threads)
+    if adapter is None and low_memory_enabled():
+        release_cpu_memory_between_runs(opts)
     providers = ort_providers()
     if isinstance(adapter, GpuAdapter):
         if "DmlExecutionProvider" not in ort.get_available_providers():
@@ -271,6 +280,8 @@ def table_ort_session(
             ]
         elif device == "cuda":
             logger.warning("Table CUDA unavailable; falling back to CPU: {}", model_path)
+    if not use_cuda and low_memory_enabled():
+        release_cpu_memory_between_runs(opts)
     started = time.perf_counter()
     try:
         session = ort.InferenceSession(model_path, sess_options=opts, providers=providers)
@@ -301,5 +312,6 @@ __all__ = [
     "get_op_num_threads",
     "ort_providers",
     "ort_session",
+    "release_cpu_memory_between_runs",
     "table_ort_session",
 ]
