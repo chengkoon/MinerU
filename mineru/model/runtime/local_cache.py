@@ -110,10 +110,29 @@ def release_local_owner(cache: dict[object, LocalModelResource], owner: RuntimeO
         gc.collect()
 
 
+def evict_local_models(cache: dict[object, LocalModelResource], match: Callable[[object], bool]) -> int:
+    """强制移出键匹配的缓存模型：撤销其应用与父上下文租约后按无人持有回收，子依赖仍按引用关系保留；返回移出数量。"""
+    discarded: list[object] = []
+    with LOCAL_MODEL_CACHE_LOCK:
+        targets = [resource for key, resource in cache.items() if match(key)]
+        for resource in targets:
+            for parent in tuple(resource.parents):
+                parent.dependencies.discard(resource)
+            resource.parents.clear()
+            resource.owners.clear()
+            resource.pinned = False
+            _collect_unused(resource, discarded)
+    if discarded:
+        discarded.clear()
+        gc.collect()
+    return len(targets)
+
+
 __all__ = [
     "LOCAL_MODEL_CACHE_LOCK",
     "LocalModelResource",
     "current_local_resource",
+    "evict_local_models",
     "get_local_model",
     "local_resource_scope",
     "release_local_owner",
