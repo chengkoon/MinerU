@@ -26,6 +26,7 @@ from ....utils.timing import stage_timer
 
 from ....model.runtime.execution import local_model_stage
 from ....utils.async_utils import drain_future, run_sync
+from ....model.runtime.contracts import AtomicModelName
 from ....model.runtime.memory import trim_process_heap
 from ..contracts import AnalyzeEffort
 from .constants import (
@@ -53,6 +54,13 @@ from .visual_containers import supplement_missing_image_block_containers as _sup
 
 if TYPE_CHECKING:
     from ....model.runtime.hybrid import HybridLocalModelContext
+
+
+def _release_stage_models(local_model_context: Any, *model_names: str) -> None:
+    """阶段结束后请求 Context 卸载本窗口不再使用的模型；仅低内存模式生效，未实现该能力的 Context 忽略。"""
+    release = getattr(local_model_context, "release_models", None)
+    if release is not None:
+        release(*model_names)
 
 
 def _configured_window_size(default: int = 64) -> int:
@@ -255,6 +263,8 @@ def _process_text_and_formulas(
                     batch_size=BATCH_RATIO * MFR_BASE_BATCH_SIZE,
                     interline_enable=interline_enable,
                 )
+            # 低内存模式：公式识别模型是最大的模型，本窗口用完即卸载。
+            _release_stage_models(local_model_context, AtomicModelName.MFR)
 
     inline_formula_list, display_formula_list = _split_formula_results(images_formula_list)
     if effort == "medium":
@@ -266,6 +276,9 @@ def _process_text_and_formulas(
                 inline_formula_list,
                 np_images,
             )
+        _release_stage_models(
+            local_model_context, AtomicModelName.TableCls, AtomicModelName.WirelessTable, AtomicModelName.WiredTable
+        )
         # 将行间公式span回填入block
         _apply_medium_display_formula_results(
             model_list,
@@ -422,6 +435,8 @@ def _prepare_pdf_window(
                         page_text_geometries,
                         **({"page_snapshots": page_snapshots} if page_snapshots is not None else {}),
                     )
+        # 低内存模式：本窗口不再使用 Layout 与表格方向模型，进入公式识别前先卸载。
+        _release_stage_models(local_model_context, AtomicModelName.Layout, AtomicModelName.TableOrientationCls)
 
         vl_style_layout_blocks = _build_vl_style_layout_blocks(images_layout_res, images_pil_list)
 

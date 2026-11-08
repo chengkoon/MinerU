@@ -21,10 +21,12 @@ from .local_cache import (
     LOCAL_MODEL_CACHE_LOCK,
     LocalModelResource,
     current_local_resource,
+    evict_local_models,
     get_local_model,
     local_resource_scope,
     release_local_owner,
 )
+from .memory import low_memory_enabled, trim_process_heap
 from .ownership import RuntimeOwner
 
 if TYPE_CHECKING:
@@ -261,6 +263,27 @@ class AtomModelSingleton:
         """释放应用直接持有的原子模型，仍被其它上下文引用的依赖继续保留。"""
         release_local_owner(self._models, owner)
 
+    def evict(self, model_names: set[str]) -> int:
+        """强制移出指定名称的原子模型（不论租约），返回移出数量；调用方仍持有的引用释放后对象即被回收。"""
+        return evict_local_models(self._models, lambda key: _atom_model_name(key) in model_names)
+
+
+def _atom_model_name(key: object) -> object:
+    """从 (small_backend, device, 模型键, ...) 缓存键中取出原子模型名称。"""
+    model_key = key[2] if isinstance(key, tuple) and len(key) > 2 else key
+    return model_key[0] if isinstance(model_key, tuple) else model_key
+
+
+# 低内存模式下可在阶段结束后卸载的模型，及 HybridLocalModelContext 上缓存它们的属性。
+_RELEASABLE_MODEL_ATTRIBUTES: dict[str, str] = {
+    AtomicModelName.Layout: "layout_model",
+    AtomicModelName.MFR: "mfr_model",
+    AtomicModelName.WiredTable: "wired_table_model",
+    AtomicModelName.WirelessTable: "wireless_table_model",
+    AtomicModelName.TableCls: "table_cls_model",
+    AtomicModelName.TableOrientationCls: "table_orientation_cls_model",
+}
+
 
 @stage_timer("model.initialize")
 def atom_model_init(model_name: str, **kwargs: Any) -> Any:
@@ -460,6 +483,20 @@ class HybridLocalModelContext:
         """把惰性模型登记为上下文依赖，复用 cached_property 时无需重复登记应用。"""
         with local_resource_scope(self._resource), model_device_scope(self._device_decision):
             return self.atom_model_manager.get_atom_model(atom_model_name=atom_model_name, **kwargs)
+
+    def release_models(self, *model_names: str) -> None:
+        """低内存模式下在阶段结束后卸载指定模型：移出 Context 属性与原子缓存，下次访问对应属性时重新加载。"""
+        if not low_memory_enabled():
+            return
+        for name in model_names:
+            self.__dict__.pop(_RELEASABLE_MODEL_ATTRIBUTES[name], None)
+        if self.atom_model_manager.evict(set(model_names)):
+            trim_process_heap()
+
+    @cached_property
+    def layout_model(self) -> PPDocLayoutV2LayoutModel:
+        """初始化时已预加载；低内存模式下阶段结束后可被卸载，再次访问时重新加载。"""
+        return self.get_layout_model()
 
     @cached_property
     def mfr_model(self) -> FormulaRecognizer:
