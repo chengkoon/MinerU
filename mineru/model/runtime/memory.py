@@ -29,9 +29,17 @@ def _get_malloc_trim() -> Callable[[int], int] | None:
         return None
 
 
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def low_memory_enabled() -> bool:
+    """低内存模式（MINERU_LOW_MEMORY）：以少量速度换取更低的常驻内存，面向无 GPU 的小内存机器。"""
+    return os.getenv("MINERU_LOW_MEMORY", "").strip().lower() in _TRUTHY
+
+
 def trim_process_heap() -> bool:
-    """按显式开关尽力归还当前 Linux 进程的空闲堆页，不加载模型或执行垃圾回收。"""
-    if os.getenv("MINERU_MALLOC_TRIM", "").strip().lower() not in {"1", "true", "yes", "on"}:
+    """按显式开关（MINERU_MALLOC_TRIM，或低内存模式）尽力归还当前 Linux 进程的空闲堆页，不加载模型或执行垃圾回收。"""
+    if os.getenv("MINERU_MALLOC_TRIM", "").strip().lower() not in _TRUTHY and not low_memory_enabled():
         return False
     if not sys.platform.startswith("linux"):
         return False
@@ -120,4 +128,4 @@ def get_vram(device: str) -> int:
     return 1
 
 
-__all__ = ["clean_memory", "get_vram", "trim_process_heap"]
+__all__ = ["clean_memory", "get_vram", "low_memory_enabled", "trim_process_heap"]
