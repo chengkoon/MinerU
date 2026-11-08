@@ -375,6 +375,8 @@ def atom_model_init(model_name: str, **kwargs: Any) -> Any:
         logger.error("model init failed")
         exit(1)
     else:
+        # 解析模型文件留下的临时内存（公式模型约 240 MB）在加载后即可归还，否则会贯穿随后的整个推理阶段。
+        trim_process_heap()
         return atom_model
 
 
