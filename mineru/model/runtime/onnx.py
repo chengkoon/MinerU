@@ -11,6 +11,7 @@ from typing import Any
 import onnxruntime as ort
 from loguru import logger
 
+from .cpu_threads import default_intra_op_threads
 from .memory import low_memory_enabled
 from .onnx_device import OnnxSelection, confirm_gpu_session, metacommands_enabled, resolve_onnx_device
 from .windows_gpu import GpuAdapter
@@ -102,9 +103,9 @@ def configure_ort_threads(
     intra_op_num_threads: int = 0,
     inter_op_num_threads: int = 0,
 ) -> None:
-    """统一设置线程数：显式正数及已有会话配置优先，其次环境变量，最后回退为 4/1。"""
+    """统一设置线程数：显式正数及已有会话配置优先，其次环境变量，最后回退为 min(4, 可用 CPU 数)/1。"""
     for attr, configured, env_name, default in (
-        ("intra_op_num_threads", intra_op_num_threads, "MINERU_INTRA_OP_NUM_THREADS", 4),
+        ("intra_op_num_threads", intra_op_num_threads, "MINERU_INTRA_OP_NUM_THREADS", default_intra_op_threads()),
         ("inter_op_num_threads", inter_op_num_threads, "MINERU_INTER_OP_NUM_THREADS", 1),
     ):
         threads = configured if configured > 0 else getattr(opts, attr)
