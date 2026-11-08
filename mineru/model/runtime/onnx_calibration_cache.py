@@ -15,7 +15,7 @@ from typing import Any, Literal
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .cpu_threads import effective_cpu_count
+from .cpu_threads import default_intra_op_threads, effective_cpu_count
 from .webgpu import WebGPUDevice
 from .windows_gpu import GpuAdapter
 
@@ -126,7 +126,7 @@ def _fingerprint(
                 "machine": platform.machine(),
                 "processor": platform.processor(),
                 "cpu_count": effective_cpu_count(),
-                "intra_threads": _threads(intra_op_num_threads, "MINERU_INTRA_OP_NUM_THREADS", 4),
+                "intra_threads": _threads(intra_op_num_threads, "MINERU_INTRA_OP_NUM_THREADS", default_intra_op_threads()),
                 "inter_threads": _threads(inter_op_num_threads, "MINERU_INTER_OP_NUM_THREADS", 1),
             }
         )

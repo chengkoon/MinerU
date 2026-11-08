@@ -33,6 +33,15 @@ def effective_cpu_count() -> int:
     return max(1, count)
 
 
+# ONNX 算子内线程数的默认上限，未显式配置时使用。
+ORT_DEFAULT_INTRA_OP_THREADS_MAX = 4
+
+
+def default_intra_op_threads() -> int:
+    """ONNX 算子内线程默认值：不超过 4，也不超过本进程实际可用的 CPU 数，避免小机器上线程互相争抢。"""
+    return min(ORT_DEFAULT_INTRA_OP_THREADS_MAX, effective_cpu_count())
+
+
 def _positive_env(name: str) -> int | None:
     """忽略缺失、零和非法线程配置，沿既有配置优先级回退。"""
     try:
@@ -74,4 +83,10 @@ def prepare_torch_thread() -> None:
         initialize_torch_threads()
 
 
-__all__ = ["effective_cpu_count", "initialize_torch_threads", "prepare_torch_thread"]
+__all__ = [
+    "ORT_DEFAULT_INTRA_OP_THREADS_MAX",
+    "default_intra_op_threads",
+    "effective_cpu_count",
+    "initialize_torch_threads",
+    "prepare_torch_thread",
+]
