@@ -210,6 +210,8 @@ class AtomModelSingleton:
 
     _instance: AtomModelSingleton | None = None
     _models: dict[object, LocalModelResource] = {}
+    # 缓存键对应的原子模型名称，供低内存模式按名称卸载，不依赖缓存键的内部结构。
+    _model_names: dict[object, str] = {}
     _lock: threading.RLock = LOCAL_MODEL_INIT_LOCK
 
     def __new__(cls, *args: Any, **kwargs: Any) -> AtomModelSingleton:
@@ -251,6 +253,7 @@ class AtomModelSingleton:
             key = atom_model_name
 
         key = (decision, key)
+        self._model_names[key] = atom_model_name
 
         def initialize() -> Any:
             """在已确定的设备作用域中创建模型，使嵌套 ONNX 会话复用相同选型。"""
@@ -265,13 +268,7 @@ class AtomModelSingleton:
 
     def evict(self, model_names: set[str]) -> int:
         """强制移出指定名称的原子模型（不论租约），返回移出数量；调用方仍持有的引用释放后对象即被回收。"""
-        return evict_local_models(self._models, lambda key: _atom_model_name(key) in model_names)
-
-
-def _atom_model_name(key: object) -> object:
-    """从 (small_backend, device, 模型键, ...) 缓存键中取出原子模型名称。"""
-    model_key = key[2] if isinstance(key, tuple) and len(key) > 2 else key
-    return model_key[0] if isinstance(model_key, tuple) else model_key
+        return evict_local_models(self._models, lambda key: self._model_names.get(key) in model_names)
 
 
 # 低内存模式下可在阶段结束后卸载的模型，及 HybridLocalModelContext 上缓存它们的属性。
