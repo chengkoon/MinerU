@@ -463,10 +463,21 @@ class PPDocLayoutV2PostProcessor:
         cls,
         boxes: List[Dict],
         iou_threshold: float = 0.9,
+        *,
+        fold_nested: bool = False,
     ) -> List[Dict]:
-        """按置信度选择重复检测，以冻结坐标判断直接重复并保留所有成员的几何。"""
+        """按置信度选择重复检测，以冻结坐标判断直接重复并保留所有成员的几何。
+
+        With ``fold_nested`` (the bounded merge will run), a box that merge will
+        fold into a larger box of its own label never suppresses a box of
+        another label: a picture drawn in a table's cell is often found twice,
+        as ``table`` and as ``image``, and the nested table is no detection of
+        its own. Before 15840d64 the PaddleX filter folded the nested table
+        first and the image survived as the cell's picture.
+        """
         if len(boxes) <= 1:
             return boxes
+        folded = cls._folded_into_same_label(boxes) if fold_nested else set()
 
         sorted_candidates = sorted(
             enumerate(boxes),
@@ -489,6 +500,8 @@ class PPDocLayoutV2PostProcessor:
                     continue
                 if cls._is_protected_formula_pair(current_box, other_box):
                     continue
+                if current_index in folded and current_box["label"] != other_box["label"]:
+                    continue
                 # 始终比较原始 current_box，不能让扩大后的并集继续吞并下一段检测。
                 if cls._calculate_iou(current_box["bbox"], other_box["bbox"]) > iou_threshold:
                     suppressed_indexes.add(other_index)
@@ -496,6 +509,31 @@ class PPDocLayoutV2PostProcessor:
             kept_boxes.append((current_index, kept_box))
 
         return [box for _, box in sorted(kept_boxes, key=lambda item: (item[1]["index"], item[0]))]
+
+    @classmethod
+    def _folded_into_same_label(
+        cls,
+        boxes: List[Dict],
+        overlap_threshold: float = 0.7,
+        area_limit: float = 1.5,
+    ) -> set[int]:
+        """Indexes of boxes the bounded merge folds into a larger box of the
+        same label: the same overlap and area bounds as _merge_overlapping_boxes."""
+        areas = [cls._calculate_bbox_area(box["bbox"]) for box in boxes]
+        folded = set()
+        for index, box in enumerate(boxes):
+            for other_index, other in enumerate(boxes):
+                if (
+                    other_index != index
+                    and other["label"] == box["label"]
+                    and areas[other_index] > areas[index]
+                    and cls._calculate_overlap_ratio(box["bbox"], other["bbox"]) > overlap_threshold
+                    and cls._calculate_bbox_area(cls._union_bbox(box["bbox"], other["bbox"]))
+                    <= areas[other_index] * area_limit
+                ):
+                    folded.add(index)
+                    break
+        return folded
 
     @classmethod
     def _is_protected_formula_pair(cls, left: Dict, right: Dict) -> bool:
@@ -779,7 +817,9 @@ class PPDocLayoutV2PostProcessor:
                     or (box["bbox"][2] - box["bbox"][0] >= 6 and box["bbox"][3] - box["bbox"][1] >= 6)
                 )
             ]
-        processed_boxes = cls._deduplicate_boxes_by_iou(processed_boxes, iou_threshold=0.9)
+        processed_boxes = cls._deduplicate_boxes_by_iou(
+            processed_boxes, iou_threshold=0.9, fold_nested=use_paddlex_filter_boxes
+        )
         processed_boxes, image_children = cls._merge_overlapping_boxes(
             processed_boxes,
             merge_non_formulas=use_paddlex_filter_boxes,

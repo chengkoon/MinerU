@@ -570,6 +570,32 @@ def test_visual_cross_label_coexistence_remains(inner_label: str) -> None:
     assert PPDocLayoutV2PostProcessor._apply_layout_post_process(boxes) == boxes
 
 
+def test_picture_in_a_table_cell_survives_its_nested_table_duplicate() -> None:
+    """A picture drawn in a table's cell is found twice with one box, as table
+    and as image, inside the table. The nested table folds into the outer one
+    and never suppresses the image, as before 15840d64 (the boxes are a scanned
+    answer key's: a drawn quadrilateral in one row of its table)."""
+    outer = _layout_box("table", (236, 180, 1442, 950), index=1, score=0.874)
+    nested = _layout_box("table", (356, 367, 945, 926), index=2, score=0.592)
+    picture = _layout_box("image", (356, 367, 945, 926), index=3, score=0.55)
+    for ordered in permutations([outer, nested, picture]):
+        result = PPDocLayoutV2PostProcessor._apply_layout_post_process(list(ordered))
+        assert sorted((box["label"], box["bbox"]) for box in result) == [
+            ("image", [356, 367, 945, 926]),
+            ("table", [236, 180, 1442, 950]),
+        ]
+
+
+def test_table_and_image_duplicate_outside_a_table_still_keeps_one() -> None:
+    """Not inside a larger box of its own label, a table and an image found
+    with one box are still one detection: the higher score's."""
+    table = _layout_box("table", (356, 367, 945, 926), index=1, score=0.592)
+    picture = _layout_box("image", (356, 367, 945, 926), index=2, score=0.55)
+    for ordered in permutations([table, picture]):
+        result = PPDocLayoutV2PostProcessor._apply_layout_post_process(list(ordered))
+        assert [box["label"] for box in result] == ["table"]
+
+
 @pytest.mark.parametrize("child_indices", [(1, 8, 12, 14), (1, 10, 12)])
 def test_image_median_resists_first_outlier_and_does_not_round(child_indices: tuple[int, ...]) -> None:
     """奇偶数量子图均使用原始中位数，异常首位子图不会把底部总图拉到开头。"""
